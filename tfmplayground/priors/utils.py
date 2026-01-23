@@ -6,40 +6,9 @@ import h5py
 import numpy as np
 import torch
 from ticl.priors import GPPrior, MLPPrior, ClassificationAdapterPrior, BooleanConjunctionPrior, StepFunctionPrior
+from tqdm import tqdm
 
-from .config import get_ticl_prior_config, get_tabpfn_prior_config, get_priors_for_lib
-
-
-def validate_prior_config(lib: str, prior_type: str = None, max_classes: int = 0):
-    """Validate that prior_type is compatible with the selected library.
-    
-    Args:
-        lib: Library name (e.g., 'ticl', 'tabicl', 'tabpfn')
-        prior_type: Type of prior to use (None to use dataloader defaults)
-        max_classes: Maximum number of classes (required > 0 for classification only libraries)
-        
-    Raises:
-        ValueError: If prior_type is not compatible with the library or max_classes is invalid.
-    """
-    # if prior_type is None, skip validation (dataloaders will use their defaults)
-    if prior_type is None:
-        return
-    
-    available_priors = get_priors_for_lib(lib)
-    
-    if prior_type not in available_priors:
-        raise ValueError(
-            f"Unknown {lib.upper()} prior: '{prior_type}'. "
-            f"Available {lib.upper()} priors: {', '.join(available_priors)}"
-        )
-    
-    # TabICL is classification-only, requires max_classes > 0
-    if lib == "tabicl" and max_classes <= 0:
-        raise ValueError(
-            f"TabICL is classification-only and requires --max_classes > 0. "
-            f"Current value: {max_classes}. Set --max_classes to a positive integer (e.g., 10)."
-        )
-    #note: there is no base_prior validation - dataloaders handle their own defaults
+from .config import get_ticl_prior_config, get_tabpfn_prior_config
 
 
 def build_ticl_prior(prior_type: str, base_prior: str = None, max_num_classes: int = None) -> Union[MLPPrior, GPPrior, ClassificationAdapterPrior, BooleanConjunctionPrior, StepFunctionPrior]:
@@ -51,7 +20,7 @@ def build_ticl_prior(prior_type: str, base_prior: str = None, max_num_classes: i
         max_num_classes: Maximum number of classes for classification priors
     """
 
-    cfg = get_ticl_prior_config(prior_type, max_num_classes)
+    cfg = get_ticl_prior_config(prior_type)
     
     if prior_type == "mlp":
         return MLPPrior(cfg)
@@ -62,6 +31,13 @@ def build_ticl_prior(prior_type: str, base_prior: str = None, max_num_classes: i
             base_prior = "mlp"  # default to MLP
         # build the base regression prior
         base_prior_obj = build_ticl_prior(base_prior)
+        
+        # we equate them rather than treating num_classes as a separate parameter because:
+        # - max_num_classes serves as the upper bound for TICL's internal sampling
+        # - even with num_classes set to a constant, TICL's class_sampler_f() will internally
+        #   vary the actual number of classes (50% chance of 2, 50% chance of uniform(2, num_classes))
+        cfg["max_num_classes"] = max_num_classes
+        cfg["num_classes"] = max_num_classes
         return ClassificationAdapterPrior(base_prior_obj, **cfg)
     elif prior_type == "boolean_conjunctions":
         return BooleanConjunctionPrior(hyperparameters=cfg)
@@ -76,7 +52,7 @@ def build_tabpfn_prior(prior_type: str, max_classes: int) -> dict:
         
     Args:
         prior_type: Type of TabPFN prior ('mlp', 'gp', 'prior_bag')
-        max_classes: Maximum number of classes (0 for regression, >0 for classification)
+        max_classes: Maximum number of classes
         
     Returns:
         dict with 'flexible', 'max_num_classes', and 'prior_config' keys
@@ -85,8 +61,12 @@ def build_tabpfn_prior(prior_type: str, max_classes: int) -> dict:
     
     return {
         'flexible': not is_regression,  # false for regression, true for classification
-        'max_num_classes': 2 if is_regression else max_classes,  # library requires >=2 regardless of regression or classification
-        'prior_config': get_tabpfn_prior_config(prior_type, max_classes),
+        'max_num_classes': 2 if is_regression else max_classes,  # library weirdly requires >=2 regardless of regression or classification
+        # num_classes parameter in the library code is equated to max_num_classes
+        # so its not varied separately here
+        'prior_config': {
+            **get_tabpfn_prior_config(prior_type),
+        },
     }
 
 
@@ -122,12 +102,12 @@ def dump_prior_to_h5(
             "single_eval_pos", shape=(0,), maxshape=(None,), chunks=(batch_size,), dtype="i4"
         )
 
-        if problem_type == "classification" and max_classes is not None:
+        if problem_type == "classification":
             f.create_dataset("max_num_classes", data=np.array((max_classes,)), chunks=(1,))
         f.create_dataset("original_batch_size", data=np.array((batch_size,)), chunks=(1,))
         f.create_dataset("problem_type", data=problem_type, dtype=h5py.string_dtype())
 
-        for e in prior:
+        for e in tqdm(prior):
             x = e["x"].to("cpu").numpy()
             y = e["y"].to("cpu").numpy()
             single_eval_pos = e["single_eval_pos"]

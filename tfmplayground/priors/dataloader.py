@@ -6,7 +6,7 @@ import h5py
 import torch
 from tabicl.prior.dataset import PriorDataset as TabICLPriorDataset
 from ticl.dataloader import PriorDataLoader as TICLPriorDataset
-# import here for future use & cleaner imports it already handles type conversions
+# import here for future use & cleaner imports/it already handles type conversions
 from tabpfn_prior import TabPFNPriorDataLoader
 from torch.utils.data import DataLoader
 
@@ -134,7 +134,7 @@ class TabICLPriorDataLoader(DataLoader):
         max_features: int,
         max_num_classes: int,
         device: torch.device,
-        prior_type: str = "mix_scm"
+        prior_type: str = "mix_scm",
     ):
         self.num_steps = num_steps
         self.batch_size = batch_size
@@ -198,8 +198,8 @@ class TICLPriorDataLoader(DataLoader):
         batch_size: int,
         num_datapoints_max: int,
         num_features: int,
+        min_eval_pos: int,
         device: torch.device,
-        min_eval_pos: int = 10,
     ):
         self.num_steps = num_steps
         self.device = device

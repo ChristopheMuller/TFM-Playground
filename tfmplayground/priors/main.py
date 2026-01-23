@@ -7,18 +7,16 @@ import numpy as np
 import torch
 
 from .dataloader import TabICLPriorDataLoader, TICLPriorDataLoader, TabPFNPriorDataLoader
-from .utils import build_ticl_prior, build_tabpfn_prior, dump_prior_to_h5, validate_prior_config
-from .config import get_available_libraries, get_default_prior
-
+from .utils import build_ticl_prior, build_tabpfn_prior, dump_prior_to_h5
 
 def main():
     parser = argparse.ArgumentParser(description="Dump prior data (TICL, TabICL, or TabPFN) into HDF5 format.")
-    parser.add_argument("--lib", type=str, required=True, choices=get_available_libraries(), help="Which library to use for the prior.")
+    parser.add_argument("--lib", type=str, required=True, choices=["ticl", "tabicl", "tabpfn"], help="Which library to use for the prior.")
     parser.add_argument("--save_path", type=str, required=False, help="Path to save the HDF5 file.")
     parser.add_argument("--num_batches", type=int, default=100, help="Number of batches to dump.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for dumping.")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device to run prior sampling on.")
-    parser.add_argument("--prior_type", type=str, required=False, help="Type of prior to use. For TICL: mlp, gp, classification_adapter, boolean_conjunctions, step_function. For TabICL: mlp_scm, tree_scm, mix_scm, dummy. For TabPFN: mlp, gp, gp_mix, prior_bag.")
+    parser.add_argument("--prior_type", type=str, required=True, help="Type of prior to use. For TICL: mlp, gp, classification_adapter, boolean_conjunctions, step_function. For TabICL: mlp_scm, tree_scm, mix_scm, dummy. For TabPFN: mlp, gp, prior_bag.")
     parser.add_argument("--base_prior", type=str, default="mlp", choices=["mlp", "gp"], help="Base regression prior for composite priors like classification_adapter.")
     parser.add_argument("--min_features", type=int, default=1, help="Minimum number of input features.")
     parser.add_argument("--max_features", type=int, default=100, help="Maximum number of input features.")
@@ -30,13 +28,6 @@ def main():
     parser.add_argument("--torch_seed", type=int, default=None, help="Random seed for PyTorch.")
 
     args = parser.parse_args()
-
-    # Set prior_type to default if not provided
-    if args.prior_type is None:
-        args.prior_type = get_default_prior(args.lib)
-    
-    # validate the prior configuration
-    validate_prior_config(args.lib, args.prior_type, args.max_classes)
 
     if args.np_seed is not None:
         np.random.seed(args.np_seed)
@@ -74,9 +65,6 @@ def main():
             **tabpfn_config,
         )
     else:  # tabicl
-        if args.min_seq_len == args.max_seq_len:
-            args.min_seq_len = None  # TabICL prior requires min_seq_len < max_seq_len
-        
         prior = TabICLPriorDataLoader(
             num_steps=args.num_batches,
             batch_size=args.batch_size,
