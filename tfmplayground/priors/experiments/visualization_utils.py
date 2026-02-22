@@ -12,7 +12,7 @@ import torch
 from pfns.bar_distribution import FullSupportBarDistribution
 from sklearn.datasets import make_moons, make_circles
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import r2_score
+from sklearn.metrics import root_mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
@@ -61,7 +61,7 @@ def plot_comparison_multi(
     # Plot metric curves (skip None values)
     for cb, name in zip(callbacks, prior_names):
         metric_history = (
-            cb.score_history if hasattr(cb, "score_history") else cb.accuracy_history
+            cb.accuracy_history if hasattr(cb, "accuracy_history") else cb.rmse_history
         )
         xs, ys = [], []
         for e, m in zip(cb.epoch_history, metric_history):
@@ -627,7 +627,7 @@ def plot_regression_prediction(
 
     # Predictions on test set
     y_pred_test = regressor.predict(X_test)
-    r2 = r2_score(y_test, y_pred_test)
+    rmse = root_mean_squared_error(y_test, y_pred_test)
 
     # Create smooth curve for visualization
     X_plot = np.linspace(X_train.min(), X_train.max(), 200).reshape(-1, 1)
@@ -664,11 +664,11 @@ def plot_regression_prediction(
 
     ax.set_xlabel("x", fontsize=9)
     ax.set_ylabel("y", fontsize=9)
-    ax.set_title(f"{title}\nR²: {r2:.3f}", fontsize=10, fontweight="bold")
+    ax.set_title(f"{title}\nRMSE: {rmse:.3f}", fontsize=10, fontweight="bold")
     ax.legend(fontsize=7, loc="best")
     ax.grid(True, alpha=0.3)
 
-    return r2
+    return rmse
 
 
 def plot_sklearn_regression_prediction(
@@ -679,7 +679,7 @@ def plot_sklearn_regression_prediction(
 
     # Predictions on test set
     y_pred_test = sklearn_model.predict(X_test)
-    r2 = r2_score(y_test, y_pred_test)
+    rmse = root_mean_squared_error(y_test, y_pred_test)
 
     # Create smooth curve for visualization
     X_plot = np.linspace(X_train.min(), X_train.max(), 200).reshape(-1, 1)
@@ -716,11 +716,11 @@ def plot_sklearn_regression_prediction(
 
     ax.set_xlabel("x", fontsize=9)
     ax.set_ylabel("y", fontsize=9)
-    ax.set_title(f"{title}\nR²: {r2:.3f}", fontsize=10, fontweight="bold")
+    ax.set_title(f"{title}\nRMSE: {rmse:.3f}", fontsize=10, fontweight="bold")
     ax.legend(fontsize=7, loc="best")
     ax.grid(True, alpha=0.3)
 
-    return r2
+    return rmse
 
 
 def plot_all_regression_predictions(

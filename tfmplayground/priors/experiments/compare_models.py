@@ -6,7 +6,7 @@ import time
 import requests
 import torch
 from pfns.bar_distribution import FullSupportBarDistribution
-from sklearn.metrics import roc_auc_score, r2_score
+from sklearn.metrics import roc_auc_score, root_mean_squared_error
 from torch import nn
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -81,17 +81,17 @@ class ClassificationTrackerCallback(ConsoleLoggerCallback):
 
 
 class RegressionTrackerCallback(ConsoleLoggerCallback):
-    """Callback that tracks R2 on toy tasks and stores the final R2 and loss history."""
+    """Callback that tracks RMSE on toy tasks and stores the final RMSE and loss history."""
 
     def __init__(self, tasks, model_name="Model", eval_every: int = 1):
         self.tasks = tasks
         self.model_name = model_name
         self.eval_every = max(1, int(eval_every))
-        self.final_score = 0.0
+        self.final_rmse = 0.0
         self.device = get_default_device()
         self.loss_history = []
-        self.score_history = []  # may contain None for skipped epochs
-        self.task_scores = {}
+        self.rmse_history = []  # may contain None for skipped epochs
+        self.task_rmse_values = {}
         self.epoch_history = []
 
     def on_epoch_end(
@@ -103,7 +103,7 @@ class RegressionTrackerCallback(ConsoleLoggerCallback):
 
         # Optionally skip expensive evaluation
         if (epoch % self.eval_every) != 0:
-            self.score_history.append(None)
+            self.rmse_history.append(None)
             print(
                 f"[{self.model_name}] epoch {epoch:5d} | time {epoch_time:5.2f}s | "
                 f"mean loss {loss:5.2f} | eval skipped (every {self.eval_every})",
@@ -116,20 +116,20 @@ class RegressionTrackerCallback(ConsoleLoggerCallback):
         predictions = get_openml_predictions(
             model=regressor, tasks=self.tasks, classification=False
         )
-        scores = []
+        rmse_values = []
         for dataset_name, (y_true, y_pred, _) in predictions.items():
-            score = r2_score(y_true, y_pred)
-            scores.append(score)
-            if dataset_name not in self.task_scores:
-                self.task_scores[dataset_name] = []
-            self.task_scores[dataset_name].append(score)
-        avg_score = sum(scores) / len(scores) if len(scores) else float("nan")
-        self.final_score = avg_score
-        self.score_history.append(avg_score)
+            rmse = root_mean_squared_error(y_true, y_pred)
+            rmse_values.append(rmse)
+            if dataset_name not in self.task_rmse_values:
+                self.task_rmse_values[dataset_name] = []
+            self.task_rmse_values[dataset_name].append(rmse)
+        avg_rmse = sum(rmse_values) / len(rmse_values) if len(rmse_values) else float("nan")
+        self.final_rmse = avg_rmse
+        self.rmse_history.append(avg_rmse)
 
         print(
             f"[{self.model_name}] epoch {epoch:5d} | time {epoch_time:5.2f}s | "
-            f"mean loss {loss:5.2f} | avg R2 {avg_score:.3f}",
+            f"mean loss {loss:5.2f} | avg RMSE {avg_rmse:.3f}",
             flush=True,
         )
 
@@ -255,7 +255,7 @@ def train_model(
 
     return (
         trained_model,
-        callback.final_score if is_regression else callback.final_accuracy,
+        callback.final_rmse if is_regression else callback.final_accuracy,
         callback,
         train_time,
         inference_time,
@@ -392,11 +392,11 @@ def main():
                 "metric": metric,
                 "loss_history": callback.loss_history,
                 "metric_history": (
-                    callback.score_history
+                    callback.rmse_history
                     if is_regression
                     else callback.accuracy_history
                 ),
-                "per_task_scores": callback.task_scores,
+                "per_task_scores":  callback.task_rmse_values if is_regression else callback.task_accuracy_values,
                 "train_time": train_time,
                 "inference_time": inference_time,
                 "param_count": param_count,
@@ -404,7 +404,7 @@ def main():
             }
         )
 
-    metric_name = "R2 Score" if is_regression else "Accuracy"
+    metric_name = "RMSE" if is_regression else "Accuracy"
 
     print(f"\n{'='*80}")
     print("FINAL COMPARISON RESULTS")
