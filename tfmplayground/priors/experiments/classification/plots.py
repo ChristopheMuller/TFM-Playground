@@ -17,6 +17,7 @@ from tfmplayground.priors.experiments.classification.analyzer import (
 from tfmplayground.priors.experiments.utils import (
     get_prior_colors,
     apply_plot_style,
+    merge_variable_width_features,
 )
 
 # individual prior visualizations
@@ -108,7 +109,7 @@ def plot_class_samples(
             all_features.append(x)
             all_labels.append(y)
 
-        all_features = np.vstack(all_features)
+        all_features = merge_variable_width_features(all_features)
         all_labels = np.concatenate(all_labels)
 
         # PCA projection
@@ -182,7 +183,7 @@ def plot_single_prior_overview(
             all_features.append(x)
             all_labels.append(y)
 
-        all_features = np.vstack(all_features)
+        all_features = merge_variable_width_features(all_features)
         all_labels = np.concatenate(all_labels)
 
         # PCA projection
@@ -648,11 +649,23 @@ def plot_feature_redundancy(
     """
     with apply_plot_style():
         n_priors = len(analyzers)
-        fig, axes = plt.subplots(1, n_priors + 1, figsize=(4 * (n_priors + 1), 4))
+        total_plots = n_priors + 1  # one heatmap per prior + one summary plot
+        
+        # 3 plots per row max
+        n_cols = min(total_plots, 3)
+        n_rows = (total_plots + n_cols - 1) // n_cols  # ceil division
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
+        
+        # Flatten axes for easy indexing
+        if n_rows == 1 and n_cols == 1:
+            axes = [axes]
+        elif n_rows == 1 or n_cols == 1:
+            axes = list(axes) if isinstance(axes, np.ndarray) else [axes]
+        else:
+            axes = axes.flatten()
+        
         colors = get_prior_colors(list(analyzers.keys()))
-
-        if n_priors == 1:
-            axes = [axes] if not isinstance(axes, np.ndarray) else axes
 
         # heatmaps for each prior
         for idx, (prior_name, analyzer) in enumerate(analyzers.items()):
@@ -673,7 +686,7 @@ def plot_feature_redundancy(
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
         # summary plot: mean absolute correlation
-        ax = axes[-1]
+        ax = axes[n_priors]  # Last used plot index
         prior_names = list(analyzers.keys())
         positions = np.arange(len(prior_names))
         mean_corrs = []
@@ -696,6 +709,10 @@ def plot_feature_redundancy(
         ax.set_title("Feature Redundancy")
         ax.set_ylim([0, 1])
         ax.grid(True, alpha=0.3, axis="y")
+
+        # hide any unused subplots from the grid
+        for idx in range(total_plots, len(axes)):
+            axes[idx].axis('off')
 
         plt.tight_layout()
         return fig, axes

@@ -290,17 +290,14 @@ class RealDataPrior(Dataset):
         y_scaled = np.nan_to_num(y_scaled, nan=0.0, posinf=0.0, neginf=0.0)
         return y_scaled.astype(np.float32)
 
-    def _pad_or_subsample_features(self, rng: np.random.Generator, X_ep: np.ndarray) -> np.ndarray:
-        """if there are more features than max_features, randomly subsample features using the provided RNG
-        if fewer, pad with zeros. returns array with shape [seq_len, max_features]."""
+    def _subsample_features(self, rng: np.random.Generator, X_ep: np.ndarray) -> np.ndarray:
+        """if there are more features than max_features, randomly subsample features using the provided RNG.
+        if fewer, return as-is (padding is handled downstream by dump_prior_to_h5)."""
         cfg = self.config
         f = X_ep.shape[1]
         if f > cfg.max_features:
             idx = rng.choice(f, size=cfg.max_features, replace=False)
             X_ep = X_ep[:, idx]
-        elif f < cfg.max_features:
-            pad = np.zeros((X_ep.shape[0], cfg.max_features - f), dtype=np.float32)
-            X_ep = np.concatenate([X_ep, pad], axis=1)
         return X_ep
 
     def _validate_task_mode(self) -> None:
@@ -458,7 +455,7 @@ class RealDataPrior(Dataset):
         single_eval_pos = self._pick_single_eval_pos(rng, X_ep.shape[0])
 
         X_ep = self._standardize_in_place(X_ep, single_eval_pos)
-        X_ep = self._pad_or_subsample_features(rng, X_ep)
+        X_ep = self._subsample_features(rng, X_ep)
 
         y_ep = self._format_target(y_ep, single_eval_pos, is_classification)
 

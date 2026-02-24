@@ -396,7 +396,7 @@ def main():
                     if is_regression
                     else callback.accuracy_history
                 ),
-                "per_task_scores":  callback.task_rmse_values if is_regression else callback.task_accuracy_values,
+                "per_task_scores":  callback.task_rmse_values if is_regression else callback.task_scores,
                 "train_time": train_time,
                 "inference_time": inference_time,
                 "param_count": param_count,
@@ -410,7 +410,7 @@ def main():
     print("FINAL COMPARISON RESULTS")
     print(f"{'='*80}\n")
 
-    sorted_runs = sorted(run_records, key=lambda r: r["metric"], reverse=True)
+    sorted_runs = sorted(run_records, key=lambda r: r["metric"], reverse=not is_regression)
     winner = sorted_runs[0]["model_name"] if sorted_runs else None
 
     print("Leaderboard (sorted by final metric):")

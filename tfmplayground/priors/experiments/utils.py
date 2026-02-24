@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -123,6 +124,36 @@ def load_multiple_analyzers(
             print(f"[WARNING] Failed to load {len(failed)} prior(s): {[f[0] for f in failed]}")
 
     return analyzers
+
+
+# data utilities
+def merge_variable_width_features(feature_arrays: List[np.ndarray]) -> np.ndarray:
+    """Merge feature arrays with different column counts without losing data.
+
+    Pads shorter arrays to the maximum width with NaN, then imputes NaN
+    entries with column means.  After PCA centering the imputed values
+    contribute zero signal, so no artificial structure is introduced and
+    no features from wider samples are discarded.
+
+    Args:
+        feature_arrays: List of 2-D arrays, each (n_points_i, n_features_i).
+
+    Returns:
+        Single (total_points, max_features) array with mean-imputed padding.
+    """
+    max_f = max(x.shape[1] for x in feature_arrays)
+    padded = []
+    for x in feature_arrays:
+        if x.shape[1] < max_f:
+            pad = np.full((x.shape[0], max_f - x.shape[1]), np.nan)
+            x = np.hstack([x, pad])
+        padded.append(x)
+    merged = np.vstack(padded)
+    # impute NaN with column mean (PCA-neutral after centering)
+    col_means = np.nanmean(merged, axis=0)
+    inds = np.where(np.isnan(merged))
+    merged[inds] = np.take(col_means, inds[1])
+    return merged
 
 
 # plotting utilities

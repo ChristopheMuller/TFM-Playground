@@ -3,6 +3,7 @@
 Includes both individual prior sample visualizations and statistical comparisons.
 """
 
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -15,6 +16,7 @@ from tfmplayground.priors.experiments.regression.analyzer import RegressionDataA
 from tfmplayground.priors.experiments.utils import (
     get_prior_colors, 
     apply_plot_style,
+    merge_variable_width_features,
 )
 
 # individual prior visualizations
@@ -72,22 +74,37 @@ def plot_function_samples(analyzer: RegressionDataAnalyzer,
         
         # right: feature correlation heatmap (mean correlation across samples)
         ax = axes[1]
-        n_features_to_show = min(10, data['num_features'][0])
-        
-        # compute mean correlation matrix across samples
-        correlations = []
+        n_features_to_show = min(10, max(data['num_features'][i] for i in sample_indices))
+        dim = n_features_to_show + 1  # +1 for target
+
+        # accumulate sum and count separately so samples with fewer features
+        # don't contribute NaNs to slots they don't cover (variable feature counts
+        # per episode now that padding is removed from the episode generator)
+        corr_sum = np.zeros((dim, dim))
+        corr_cnt = np.zeros((dim, dim))
+
         for idx in sample_indices:
             n_points = data['num_datapoints'][idx]
             n_features = data['num_features'][idx]
-            x = data['X'][idx, :n_points, :min(n_features_to_show, n_features)]
+            n_use = min(n_features_to_show, n_features)
+
+            x = data['X'][idx, :n_points, :n_use]
             y = data['y'][idx, :n_points]
-            
-            # combine features and target for correlation
+
             combined = np.column_stack([x, y.reshape(-1, 1)])
-            corr = np.corrcoef(combined.T)
-            correlations.append(corr)
-        
-        mean_corr = np.mean(correlations, axis=0)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                corr = np.corrcoef(combined.T)  # shape (n_use+1, n_use+1)
+
+            # place into the top-left corner of the full dim×dim matrix
+            s = n_use + 1  # actual size including target
+            valid = np.isfinite(corr)
+            corr_sum[:s, :s] += np.where(valid, corr, 0)
+            corr_cnt[:s, :s] += valid
+
+        # mean only where we have data; leave other cells as NaN
+        with np.errstate(invalid='ignore'):
+            mean_corr = np.where(corr_cnt > 0, corr_sum / corr_cnt, np.nan)
         
         im = ax.imshow(mean_corr, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
         ax.set_xticks(range(n_features_to_show + 1))
@@ -180,7 +197,7 @@ def plot_single_prior_overview(analyzer: RegressionDataAnalyzer,
             all_features.append(x)
             all_targets.append(y)
         
-        all_features = np.vstack(all_features)
+        all_features = merge_variable_width_features(all_features)
         all_targets = np.concatenate(all_targets)
         
         # simple PCA-like projection: use first 2 principal components
@@ -711,11 +728,23 @@ def plot_redundancy(analyzers: Dict[str, RegressionDataAnalyzer]) -> Tuple[plt.F
     """
     with apply_plot_style():
         n_priors = len(analyzers)
-        fig, axes = plt.subplots(1, n_priors + 1, figsize=(4 * (n_priors + 1), 4))
-        colors = get_prior_colors(list(analyzers.keys()))
+        total_plots = n_priors + 1  # one heatmap per prior + one summary plot
         
-        if n_priors == 1:
+        # 3 plots per row max
+        n_cols = min(total_plots, 3)
+        n_rows = (total_plots + n_cols - 1) // n_cols  # ceil division
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
+        
+        # Flatten axes for easy indexing
+        if n_rows == 1 and n_cols == 1:
             axes = [axes]
+        elif n_rows == 1 or n_cols == 1:
+            axes = list(axes) if isinstance(axes, np.ndarray) else [axes]
+        else:
+            axes = axes.flatten()
+        
+        colors = get_prior_colors(list(analyzers.keys()))
         
         # heatmaps for each prior
         for idx, (prior_name, analyzer) in enumerate(analyzers.items()):
@@ -737,7 +766,7 @@ def plot_redundancy(analyzers: Dict[str, RegressionDataAnalyzer]) -> Tuple[plt.F
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
         # summary plot: mean absolute correlation
-        ax = axes[-1]
+        ax = axes[n_priors]  # Last used plot index
         prior_names = list(analyzers.keys())
         positions = np.arange(len(prior_names))
         mean_corrs = []
@@ -753,6 +782,10 @@ def plot_redundancy(analyzers: Dict[str, RegressionDataAnalyzer]) -> Tuple[plt.F
         ax.set_ylabel('Mean |Correlation|')
         ax.set_title('Feature Redundancy')
         ax.set_ylim([0, 1])
+        
+        # Hide any unused subplots
+        for idx in range(total_plots, len(axes)):
+            axes[idx].axis('off')
         
         plt.tight_layout()
         return fig, axes

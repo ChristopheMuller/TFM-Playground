@@ -18,6 +18,7 @@ def generate_prior_data(
     config: Dict,
     save_dir: str,
     max_classes: int,
+    prior_info: Dict = None,
 ) -> str:
     """Generate synthetic data from a prior using the main CLI.
     
@@ -37,25 +38,33 @@ def generate_prior_data(
     # extract data generation settings
     gen_config = config['data_generation']
     
+    # real data prior is always batch_size=1 (enforced by the CLI)
+    # to keep total sample count equal (num_batches × batch_size),
+    # multiply num_batches by the configured batch_size for real priors
+    effective_batch_size = 1 if lib == "real" else gen_config['batch_size']
+    effective_num_batches = gen_config['num_batches'] * gen_config['batch_size'] if lib == "real" else gen_config['num_batches']
+    total_samples = effective_num_batches * effective_batch_size
+    
     # create output filename (absolute path)
     save_path = os.path.abspath(os.path.join(
         save_dir,
-        f"prior_{prior_name}_{gen_config['num_batches']}x{gen_config['batch_size']}_"
+        f"prior_{prior_name}_{effective_num_batches}x{effective_batch_size}_"
         f"{gen_config['max_seq_len']}x{gen_config['max_features']}.h5"
     ))
     
     print(f"\nGenerating data for {prior_name.upper()}...")
     print(f"  Library: {lib}")
     print(f"  Prior type: {prior_type}")
-    print(f"  Batches: {gen_config['num_batches']}")
-    print(f"  Batch size: {gen_config['batch_size']}")
+    print(f"  Batches: {effective_num_batches}")
+    print(f"  Batch size: {effective_batch_size}")
+    print(f"  Total samples: {total_samples}")
     print(f"  Max sequence length: {gen_config['max_seq_len']}")
     print(f"  Max features: {gen_config['max_features']}")
     print(f"  Seed: {gen_config['seed']}")
     print(f"  Output: {save_path}")
     
     # get project root
-    project_root = Path(__file__).parent.parent.parent
+    project_root = Path(__file__).parent.parent.parent.parent
     
     # build command to call the main CLI
     cmd = [
@@ -63,8 +72,8 @@ def generate_prior_data(
         "--lib", lib,
         "--prior_type", prior_type,
         "--max_classes", str(max_classes),
-        "--num_batches", str(gen_config['num_batches']),
-        "--batch_size", str(gen_config['batch_size']),
+        "--num_batches", str(effective_num_batches),
+        "--batch_size", str(effective_batch_size),
         "--max_seq_len", str(gen_config['max_seq_len']),
         "--max_features", str(gen_config['max_features']),
         "--min_eval_pos", str(gen_config['min_eval_pos']),
@@ -73,6 +82,26 @@ def generate_prior_data(
         "--np_seed", str(gen_config['seed']),
         "--torch_seed", str(gen_config['seed']),
     ]
+
+    # append real-data-specific args
+    if lib == "real":
+        real_cfg = config['real_data']
+        sampling_mode = (prior_info or {}).get('sampling_mode', 'only')
+        task_type = "classification" if max_classes > 0 else "regression"
+
+        # pick the right pool for the sampling_mode
+        if sampling_mode == "mixed":
+            train_pool = real_cfg['pools']['all']
+            fallback_pool = real_cfg['pools'][task_type]
+        else:
+            train_pool = real_cfg['pools'][task_type]
+            fallback_pool = None
+
+        cmd += ["--cache_dir", real_cfg['cache_dir'],
+                "--train_pool", train_pool,
+                "--mode", sampling_mode]
+        if fallback_pool:
+            cmd += ["--fallback_pool", fallback_pool]
     
     # run the subprocess command from project root
     print(cmd)
@@ -176,6 +205,7 @@ def main():
             config=config,
             save_dir=save_dir,
             max_classes=max_classes,
+            prior_info=prior_info,
         )
         generated_files[prior_name] = file_path
     

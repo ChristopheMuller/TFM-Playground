@@ -17,6 +17,19 @@ data_generation:
 #       TabICL: classification-only
 available_priors:
   regression:
+    # Real data prior
+    real_only:
+      lib: "real"
+      prior_type: "mlp"
+      sampling_mode: "only"
+      description: "Real data prior (only mode, original target)"
+
+    real_mixed:
+      lib: "real"
+      prior_type: "mlp"
+      sampling_mode: "mixed"
+      description: "Real data prior (mixed mode, any matching target column)"
+
     # TICL regression priors
     ticl_gp:
       lib: "ticl"
@@ -45,6 +58,19 @@ available_priors:
       description: "TabPFN Prior Bag (ensemble)"
 
   classification:
+    # Real data prior
+    real_only:
+      lib: "real"
+      prior_type: "mlp"
+      sampling_mode: "only"
+      description: "Real data prior (only mode, original target)"
+
+    real_mixed:
+      lib: "real"
+      prior_type: "mlp"
+      sampling_mode: "mixed"
+      description: "Real data prior (mixed mode, any matching target column)"
+
     # TabICL (classification-only)
     tabicl_mlp_scm:
       lib: "tabicl"
@@ -92,6 +118,14 @@ available_priors:
       lib: "tabpfn"
       prior_type: "prior_bag"
       description: "TabPFN Prior Bag (ensemble)"
+
+# Real data prior settings (used when lib=real)
+real_data:
+  cache_dir: "tfmplayground/priors/real_data/data/cache"
+  pools:
+    all: "tfmplayground/priors/real_data/data/pools/train_pool_all.txt"
+    classification: "tfmplayground/priors/real_data/data/pools/train_pool_classification.txt"
+    regression: "tfmplayground/priors/real_data/data/pools/train_pool_regression.txt"
 
 # Output settings
 output:

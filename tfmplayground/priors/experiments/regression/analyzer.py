@@ -151,6 +151,9 @@ class RegressionDataAnalyzer(DataAnalyzer):
             y_sample = self.data["y"][i, :n_points]
             
             for j in range(n_features):
+                # skip constant columns — correlation is undefined for them
+                if np.nanvar(X_sample[:, j]) == 0 or np.nanvar(y_sample) == 0:
+                    continue
                 
                 # pearson correlation for feature j
                 # does y increase/decrease linearly with feature j?
