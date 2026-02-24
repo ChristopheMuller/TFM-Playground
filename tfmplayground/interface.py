@@ -62,11 +62,11 @@ def get_feature_preprocessor(X: np.ndarray | pd.DataFrame) -> ColumnTransformer:
     num_transformer = Pipeline([
         ("to_pandas", FunctionTransformer(to_pandas)), # to apply pd.to_numeric of pandas
         ("to_numeric", FunctionTransformer(to_numeric)), # in case numeric columns are stored as strings
-        ('imputer', SimpleImputer(strategy='mean')) # median might be better because of outliers
+        ('imputer', SimpleImputer(strategy='mean', add_indicator=True)) # median might be better because of outliers
     ])
     cat_transformer = Pipeline([
         ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=np.nan)),
-        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('imputer', SimpleImputer(strategy='most_frequent', add_indicator=True)),
     ])
 
     preprocessor = ColumnTransformer(
