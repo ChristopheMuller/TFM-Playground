@@ -1,7 +1,9 @@
 import argparse
+import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 import requests
 import torch
@@ -15,8 +17,10 @@ from tfmplayground.callbacks import ConsoleLoggerCallback
 from tfmplayground.evaluation import (
     TOY_TASKS_CLASSIFICATION,
     TOY_TASKS_REGRESSION,
-    get_openml_predictions,
 )
+
+from new_evaluation import get_openml_predictions
+
 from tfmplayground.interface import NanoTabPFNClassifier, NanoTabPFNRegressor
 from tfmplayground.model import NanoTabPFNModel
 from tfmplayground.priors import PriorDumpDataLoader
@@ -26,33 +30,36 @@ from visualization_utils import (
     plot_comparison_multi,
     plot_all_decision_boundaries,
     plot_all_regression_predictions,
+    plot_per_fold_normalized_averaged_metrics,
     plot_per_task_comparison,
     plot_time_budget_metrics,
 )
 
 
 class ClassificationTrackerCallback(ConsoleLoggerCallback):
-    """Callback that tracks accuracy on toy tasks and stores the final accuracy and loss history."""
+    """Callback that tracks ROC-AUC on tasks and stores the final ROC-AUC and loss history."""
 
     def __init__(self, tasks, model_name="Model", eval_every: int = 1):
         self.tasks = tasks
         self.model_name = model_name
         self.eval_every = max(1, int(eval_every))
-        self.final_accuracy = 0.0
+        self.final_roc_auc = 0.0
         self.device = get_default_device()
         self.loss_history = []
-        self.accuracy_history = []  # may contain None for skipped epochs
-        self.task_scores = {}
+        self.roc_auc_history = []  # may contain None for skipped epochs
+        self.task_roc_auc_values = {}  # dataset -> list[ list[fold_auc] ] (per epoch)
         self.epoch_history = []
+        self.epoch_times = []
 
     def on_epoch_end(self, epoch: int, epoch_time: float, loss: float, model, **kwargs):
         # Always track loss per epoch
         self.epoch_history.append(epoch)
+        self.epoch_times.append(epoch_time)
         self.loss_history.append(loss)
 
         # Optionally skip expensive evaluation
         if (epoch % self.eval_every) != 0:
-            self.accuracy_history.append(None)
+            self.roc_auc_history.append(None)
             print(
                 f"[{self.model_name}] epoch {epoch:5d} | time {epoch_time:5.2f}s | "
                 f"mean loss {loss:5.2f} | eval skipped (every {self.eval_every})",
@@ -61,21 +68,61 @@ class ClassificationTrackerCallback(ConsoleLoggerCallback):
             return
 
         classifier = NanoTabPFNClassifier(model, self.device)
-        predictions = get_openml_predictions(model=classifier, tasks=self.tasks)
-        scores = []
-        for dataset_name, (y_true, y_pred, y_proba) in predictions.items():
-            score = roc_auc_score(y_true, y_proba, multi_class="ovr")
-            scores.append(score)
-            if dataset_name not in self.task_scores:
-                self.task_scores[dataset_name] = []
-            self.task_scores[dataset_name].append(score)
-        avg_score = sum(scores) / len(scores) if len(scores) else float("nan")
-        self.final_accuracy = avg_score
-        self.accuracy_history.append(avg_score)
+        per_fold_dataset_predictions = get_openml_predictions(
+            model=classifier,
+            tasks=self.tasks,
+            classification=True,
+        )
+
+        dataset_auc_means = []
+
+        for dataset_name, per_fold_predictions in per_fold_dataset_predictions.items():
+            fold_auc_values = []
+
+            for fold_dict in per_fold_predictions:
+                y_true = fold_dict["y_true"]
+                y_proba = fold_dict.get("y_proba", None)
+
+                # If probabilities are missing, can't compute ROC-AUC
+                if y_proba is None:
+                    continue
+
+                try:
+                    # roc_auc_score supports:
+                    # - binary: y_proba shape (n,) or (n,2) but we typically store (n,) positive class
+                    # - multiclass: y_proba shape (n, C)
+                    fold_auc = roc_auc_score(y_true, y_proba, multi_class="ovr")
+                except ValueError:
+                    # e.g. only one class present in y_true for this fold
+                    continue
+
+                fold_auc_values.append(fold_auc)
+
+            avg_fold_auc = (
+                sum(fold_auc_values) / len(fold_auc_values)
+                if len(fold_auc_values)
+                else float("nan")
+            )
+
+            dataset_auc_means.append(avg_fold_auc)
+
+            if dataset_name not in self.task_roc_auc_values:
+                self.task_roc_auc_values[dataset_name] = []
+            # Store per-epoch fold values (like regression tracker does)
+            self.task_roc_auc_values[dataset_name].append(fold_auc_values)
+
+        avg_auc = (
+            sum(dataset_auc_means) / len(dataset_auc_means)
+            if len(dataset_auc_means)
+            else float("nan")
+        )
+
+        self.final_roc_auc = avg_auc
+        self.roc_auc_history.append(avg_auc)
 
         print(
             f"[{self.model_name}] epoch {epoch:5d} | time {epoch_time:5.2f}s | "
-            f"mean loss {loss:5.2f} | avg accuracy {avg_score:.3f}",
+            f"mean loss {loss:5.2f} | avg ROC-AUC {avg_auc:.3f}",
             flush=True,
         )
 
@@ -93,12 +140,14 @@ class RegressionTrackerCallback(ConsoleLoggerCallback):
         self.rmse_history = []  # may contain None for skipped epochs
         self.task_rmse_values = {}
         self.epoch_history = []
+        self.epoch_times = []
 
     def on_epoch_end(
         self, epoch: int, epoch_time: float, loss: float, model, dist=None, **kwargs
     ):
         # Always track loss per epoch
         self.epoch_history.append(epoch)
+        self.epoch_times.append(epoch_time)
         self.loss_history.append(loss)
 
         # Optionally skip expensive evaluation
@@ -113,17 +162,29 @@ class RegressionTrackerCallback(ConsoleLoggerCallback):
 
         # Use the full NanoTabPFNRegressor which handles the distribution
         regressor = NanoTabPFNRegressor(model=model, dist=dist, device=self.device)
-        predictions = get_openml_predictions(
+        per_fold_dataset_predictions = get_openml_predictions(
             model=regressor, tasks=self.tasks, classification=False
         )
         rmse_values = []
-        for dataset_name, (y_true, y_pred, _) in predictions.items():
-            rmse = root_mean_squared_error(y_true, y_pred)
-            rmse_values.append(rmse)
+        for dataset_name, per_fold_predictions in per_fold_dataset_predictions.items():
+            fold_rmse_values = []
+            for fold_dict in per_fold_predictions:
+                fold_rmse = root_mean_squared_error(
+                    fold_dict["y_true"], fold_dict["y_pred"]
+                )
+                fold_rmse_values.append(fold_rmse)
+            avg_fold_rmse = (
+                sum(fold_rmse_values) / len(fold_rmse_values)
+                if len(fold_rmse_values)
+                else float("nan")
+            )
+            rmse_values.append(avg_fold_rmse)
             if dataset_name not in self.task_rmse_values:
                 self.task_rmse_values[dataset_name] = []
-            self.task_rmse_values[dataset_name].append(rmse)
-        avg_rmse = sum(rmse_values) / len(rmse_values) if len(rmse_values) else float("nan")
+            self.task_rmse_values[dataset_name].append(fold_rmse_values)
+        avg_rmse = (
+            sum(rmse_values) / len(rmse_values) if len(rmse_values) else float("nan")
+        )
         self.final_rmse = avg_rmse
         self.rmse_history.append(avg_rmse)
 
@@ -255,12 +316,109 @@ def train_model(
 
     return (
         trained_model,
-        callback.final_rmse if is_regression else callback.final_accuracy,
+        callback.final_rmse if is_regression else callback.final_roc_auc,
         callback,
         train_time,
         inference_time,
         param_count,
     )
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "item") and callable(value.item):
+        return _json_safe(value.item())
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+    return value
+
+
+def _last_non_none(values):
+    for v in reversed(values):
+        if v is not None:
+            return v
+    return None
+
+
+def _build_metrics_payload(run_records, metric_name: str, is_regression: bool):
+    sorted_runs = sorted(
+        run_records, key=lambda r: r["metric"], reverse=not is_regression
+    )
+    winner_record = sorted_runs[0] if sorted_runs else None
+
+    models = []
+    for r in run_records:
+        metric_history = r["metric_history"]
+        valid_metric_history = [
+            (idx + 1, v) for idx, v in enumerate(metric_history) if v is not None
+        ]
+
+        if valid_metric_history:
+            if is_regression:
+                best_epoch, best_metric = min(valid_metric_history, key=lambda x: x[1])
+            else:
+                best_epoch, best_metric = max(valid_metric_history, key=lambda x: x[1])
+            final_metric = valid_metric_history[-1][1]
+        else:
+            best_epoch, best_metric, final_metric = None, None, None
+
+        if is_regression:
+            final_task_scores = {}
+            for dataset_name, per_epoch_folds in r["per_task_scores"].items():
+                if not per_epoch_folds:
+                    final_task_scores[dataset_name] = None
+                    continue
+                last_fold_values = per_epoch_folds[-1]
+                if not last_fold_values:
+                    final_task_scores[dataset_name] = None
+                else:
+                    final_task_scores[dataset_name] = sum(last_fold_values) / len(
+                        last_fold_values
+                    )
+        else:
+            final_task_scores = {
+                dataset_name: _last_non_none(values)
+                for dataset_name, values in r["per_task_scores"].items()
+            }
+
+        model_payload = {
+            "model_index": r["index"],
+            "model_name": r["model_name"],
+            "prior": r["prior"],
+            "prior_name": r["prior_name"],
+            "metric_name": metric_name,
+            "epochs": list(range(1, len(r["loss_history"]) + 1)),
+            "epoch_times": r["callback"].epoch_times,
+            "losses": r["loss_history"],
+            "metric_history": metric_history,
+            "task_scores": r["per_task_scores"],
+            "final_task_scores": final_task_scores,
+            "train_time": r["train_time"],
+            "inference_time": r["inference_time"],
+            "param_count": r["param_count"],
+            "final_metric": final_metric,
+            "final_loss": _last_non_none(r["loss_history"]),
+            "best_epoch": best_epoch,
+            "best_metric": best_metric,
+        }
+        models.append(model_payload)
+
+    return {
+        "meta": {
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        },
+        "models": models,
+        "summary": {
+            "winner_index": winner_record["index"] if winner_record else None,
+            "winner_prior": winner_record["prior"] if winner_record else None,
+            "best_metric": winner_record["metric"] if winner_record else None,
+            "num_models": len(run_records),
+        },
+    }
 
 
 def main():
@@ -291,6 +449,12 @@ def main():
         type=str,
         default="comparison_plot.png",
         help="Path to save the comparison plot",
+    )
+    parser.add_argument(
+        "--metrics_output",
+        type=str,
+        default="comparison_metrics.json",
+        help="Path to save detailed comparison metrics JSON",
     )
 
     parser.add_argument(
@@ -394,23 +558,28 @@ def main():
                 "metric_history": (
                     callback.rmse_history
                     if is_regression
-                    else callback.accuracy_history
+                    else callback.roc_auc_history
                 ),
-                "per_task_scores":  callback.task_rmse_values if is_regression else callback.task_scores,
+                "per_task_scores": (
+                    callback.task_rmse_values if is_regression else callback.task_roc_auc_values
+                ),
                 "train_time": train_time,
                 "inference_time": inference_time,
                 "param_count": param_count,
                 "model": trained_model,
+                "callback": callback,
             }
         )
 
-    metric_name = "RMSE" if is_regression else "Accuracy"
+    metric_name = "RMSE" if is_regression else "ROC-AUC"
 
     print(f"\n{'='*80}")
     print("FINAL COMPARISON RESULTS")
     print(f"{'='*80}\n")
 
-    sorted_runs = sorted(run_records, key=lambda r: r["metric"], reverse=not is_regression)
+    sorted_runs = sorted(
+        run_records, key=lambda r: r["metric"], reverse=not is_regression
+    )
     winner = sorted_runs[0]["model_name"] if sorted_runs else None
 
     print("Leaderboard (sorted by final metric):")
@@ -426,6 +595,21 @@ def main():
     print(f"\nWinner: {winner}")
     print(f"\n{'='*80}\n")
 
+    metrics_payload = _build_metrics_payload(
+        run_records=run_records,
+        metric_name=metric_name,
+        is_regression=is_regression,
+    )
+    metrics_output_dir = os.path.dirname(args.metrics_output)
+    if metrics_output_dir:
+        os.makedirs(metrics_output_dir, exist_ok=True)
+    with open(args.metrics_output, "w", encoding="utf-8") as f:
+        json.dump(_json_safe(metrics_payload), f, indent=2)
+    print(f"Saved metrics JSON to: {args.metrics_output}")
+    
+    per_fold_output = args.plot_output.replace(".png", "_per_fold_normalized.png")
+    plot_per_fold_normalized_averaged_metrics(metrics_payload, metric_name=metric_name, output_path=per_fold_output)
+    
     plot_comparison_multi(
         callbacks=callbacks,
         prior_names=prior_names,
@@ -445,7 +629,7 @@ def main():
         metric_name=metric_name,
         output_prefix=os.path.splitext(args.plot_output)[0],
     )
-
+    
     # Plot decision boundaries for classification tasks only
     if not is_regression:
         decision_boundary_output = args.plot_output.replace(

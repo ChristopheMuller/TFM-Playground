@@ -12,7 +12,7 @@ import torch
 from pfns.bar_distribution import FullSupportBarDistribution
 from sklearn.datasets import make_moons, make_circles
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import root_mean_squared_error
+from sklearn.metrics import roc_auc_score, root_mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
@@ -61,7 +61,7 @@ def plot_comparison_multi(
     # Plot metric curves (skip None values)
     for cb, name in zip(callbacks, prior_names):
         metric_history = (
-            cb.accuracy_history if hasattr(cb, "accuracy_history") else cb.rmse_history
+            cb.roc_auc_history if hasattr(cb, "roc_auc_history") else cb.rmse_history
         )
         xs, ys = [], []
         for e, m in zip(cb.epoch_history, metric_history):
@@ -111,7 +111,7 @@ def plot_per_task_comparison(
     all_tasks = set()
     final_task_scores = []
     for record in run_records:
-        task_scores = record.get("per_task_scores", {})
+        task_scores = record.get("final_task_scores", {})
         if not task_scores:
             continue
         final_scores = {}
@@ -399,7 +399,7 @@ def plot_decision_boundary(
     classifier.fit(X_train, y_train)
 
     y_pred = classifier.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
+    roc_auc = roc_auc_score(y_test, y_pred)
 
     # Create mesh grid for decision boundary
     x_min, x_max = X_train[:, 0].min() - 0.5, X_train[:, 0].max() + 0.5
@@ -477,9 +477,9 @@ def plot_decision_boundary(
     ax.set_ylim(y_min, y_max)
     ax.set_xlabel("x1", fontsize=9)
     ax.set_ylabel("x2", fontsize=9)
-    ax.set_title(f"{title}\nAcc: {accuracy:.1%}", fontsize=10, fontweight="bold")
+    ax.set_title(f"{title}\nROC-AUC: {roc_auc:.1%}", fontsize=10, fontweight="bold")
 
-    return accuracy
+    return roc_auc
 
 
 def plot_sklearn_decision_boundary(
@@ -488,7 +488,8 @@ def plot_sklearn_decision_boundary(
     """Plot decision boundary for sklearn models."""
     sklearn_model.fit(X_train, y_train)
     y_pred = sklearn_model.predict(X_test)
-    accuracy = np.mean(y_pred == y_test)
+    
+    roc_auc = roc_auc_score(y_test, y_pred)
 
     x_min, x_max = X_train[:, 0].min() - 0.5, X_train[:, 0].max() + 0.5
     y_min, y_max = X_train[:, 1].min() - 0.5, X_train[:, 1].max() + 0.5
@@ -566,9 +567,9 @@ def plot_sklearn_decision_boundary(
     ax.set_ylim(y_min, y_max)
     ax.set_xlabel("x1", fontsize=9)
     ax.set_ylabel("x2", fontsize=9)
-    ax.set_title(f"{title}\nAcc: {accuracy:.1%}", fontsize=10, fontweight="bold")
+    ax.set_title(f"{title}\nROC-AUC: {roc_auc:.1%}", fontsize=10, fontweight="bold")
 
-    return accuracy
+    return roc_auc
 
 
 def generate_toy_regression_dataset(name, n_samples=100, noise=0.1, random_state=42):
@@ -954,4 +955,110 @@ def plot_all_decision_boundaries(
     except:
         pass
 
+    plt.close()
+
+
+
+
+
+def _normalize_results_variable_folds(metrics_payload):
+    models = metrics_payload["models"]
+    model_count = len(models)
+    datasets = list(models[0]["task_scores"].keys())
+    n_epochs = len(models[0]["task_scores"][datasets[0]])
+
+    normalized_scores = {m: [] for m in range(model_count)}
+
+    for e in range(n_epochs):
+
+        per_model_dataset_means = {m: [] for m in range(model_count)}
+
+        for d in datasets:
+
+            fold_count = len(models[0]["task_scores"][d][e])
+
+            per_model_fold_scores = {m: [] for m in range(model_count)}
+
+            for f in range(fold_count):
+
+                raw = np.array([
+                    models[m]["task_scores"][d][e][f]
+                    for m in range(model_count)
+                ])
+
+                vmin = raw.min()
+                vmax = raw.max()
+
+                if vmax == vmin:
+                    norm = np.ones(model_count) * 0.5
+                else:
+                    # RMSE → lower is better
+                    norm = (vmax - raw) / (vmax - vmin)
+
+                for m in range(model_count):
+                    per_model_fold_scores[m].append(norm[m])
+
+            # average folds → dataset-level score
+            for m in range(model_count):
+                per_model_dataset_means[m].append(
+                    np.mean(per_model_fold_scores[m])
+                )
+
+        # average datasets → final epoch score
+        for m in range(model_count):
+            normalized_scores[m].append(
+                np.mean(per_model_dataset_means[m])
+            )
+
+    return normalized_scores
+
+
+def plot_per_fold_normalized_averaged_metrics(
+    metrics_payload,
+    metric_name="Accuracy",
+    output_path="per_fold_normalized_comparison.png",
+):
+    """Plot per-fold normalized averaged metrics for all models."""
+
+    if not metrics_payload["models"]:
+        return
+
+    # Compute normalized scores (per model, per epoch)
+    normalized_scores = _normalize_results_variable_folds(metrics_payload)
+
+    models = metrics_payload["models"]
+
+    plt.figure(figsize=(8, 5))
+
+    for model in models:
+        m_idx = model["model_index"] - 1  # adjust if model_index starts from 1
+        model_name = model["model_name"]
+        epochs = model["epochs"]
+
+        if m_idx not in normalized_scores:
+            continue
+
+        scores = normalized_scores[m_idx]
+
+        # Safety check in case lengths differ
+        min_len = min(len(epochs), len(scores))
+        epochs = epochs[:min_len]
+        scores = scores[:min_len]
+
+        plt.plot(
+            epochs,
+            scores,
+            marker="o",
+            label=model_name,
+        )
+
+    plt.xlabel("Epoch")
+    plt.ylabel(f"Normalized {metric_name}")
+    plt.title(f"Per-Fold Normalized Averaged {metric_name}")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+
+    output_path = _resolve_plot_path(output_path)
+    plt.savefig(output_path)
     plt.close()
