@@ -19,5 +19,32 @@
             41156, 40981, 1464, 40975, 40701, 23, 31, 40670, 188, 1475, 4538, 41143, 1067, 3, 41144, 12, 1487, 1049, 41145, 1489, 1494, 40900, 40984, 40982, 41146, 54, 40983, 40498, 181
         ],
         "eval_task_ids": []
+    },
+    "toy_tasks_classification": {
+        "description": "Toy classification tasks for quick evaluation (iris, wine, breast_cancer)",
+        "eval_dataset_ids": [],
+        "eval_task_ids": [
+            59, 2382, 9946
+        ]
+    },
+    "toy_tasks_regression": {
+        "description": "Toy regression tasks for quick evaluation (diabetes)",
+        "eval_dataset_ids": [],
+        "eval_task_ids": [
+            362443
+        ]
+    },
+    "tabarena": {
+        "description": "TabArena v0.1 benchmark suite",
+        "eval_dataset_ids": [],
+        "eval_task_ids": [
+            363612, 363613, 363614, 363615, 363616, 363618, 363619, 363620,
+            363621, 363623, 363624, 363625, 363626, 363627, 363628, 363629,
+            363630, 363631, 363632, 363671, 363672, 363673, 363674, 363675,
+            363676, 363677, 363678, 363679, 363681, 363682, 363683, 363684,
+            363685, 363686, 363689, 363691, 363693, 363694, 363696, 363697,
+            363698, 363699, 363700, 363702, 363704, 363705, 363706, 363707,
+            363708, 363711, 363712
+        ]
     }
 }
