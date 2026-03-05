@@ -41,6 +41,7 @@ def train_model(
     eval_every: int = 1,
     tasks=None,
     n_buckets: int = 100,
+    accumulate_gradients: int = 1,
 ):
     """
     Train a single nanoTabPFN model on the given prior.
@@ -56,6 +57,7 @@ def train_model(
         eval_every: Evaluate toy tasks every N epochs
         tasks: OpenML task IDs for evaluation
         n_buckets: Number of buckets for regression bar distribution
+        accumulate_gradients: Number of gradients to accumulate before updating weights
 
     Returns:
         Tuple of (trained_model, final_metric, callback, train_time,
@@ -128,7 +130,7 @@ def train_model(
         prior=prior,
         criterion=criterion,
         epochs=epochs,
-        accumulate_gradients=1,
+        accumulate_gradients=accumulate_gradients,
         lr=lr,
         device=device,
         callbacks=[callback],

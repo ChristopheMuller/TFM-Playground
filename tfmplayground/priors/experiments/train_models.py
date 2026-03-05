@@ -175,6 +175,7 @@ def _save_trained_model(
             "lr": args.lr,
             "seed": args.seed,
             "eval_every": args.eval_every,
+            "accumulate_gradients": args.accumulate_gradients,
         },
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
@@ -208,6 +209,12 @@ def main():
         "--steps", type=int, default=5, help="Number of steps per epoch"
     )
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument(
+        "--accumulate_gradients",
+        type=int,
+        default=1,
+        help="Number of gradients to accumulate before updating weights (default: 1)",
+    )
     parser.add_argument(
         "--seed", type=int, default=2402, help="Random seed for reproducibility"
     )
@@ -307,6 +314,7 @@ def main():
                 device=device,
                 eval_every=args.eval_every,
                 tasks=use_tasks,
+                accumulate_gradients=args.accumulate_gradients,
             )
         )
 
