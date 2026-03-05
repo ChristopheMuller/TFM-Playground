@@ -58,7 +58,7 @@ def _discover_trained_models(models_dir: str):
 
 
 def _select_models_interactively(available):
-    """Let the user pick >= 2 trained models to compare."""
+    """Let the user pick >= 1 trained models to plot/compare."""
     print("\n" + "=" * 60)
     print("AVAILABLE TRAINED MODELS")
     print("=" * 60)
@@ -79,7 +79,7 @@ def _select_models_interactively(available):
         )
 
     print("\n" + "=" * 60)
-    print("SELECT MODELS TO COMPARE  (need >= 2)")
+    print("SELECT MODELS TO COMPARE  (need >= 1)")
     print("=" * 60)
     print("  Enter numbers separated by commas  e.g. 1,3")
     print("  Enter 'all' to compare every model")
@@ -101,8 +101,8 @@ def _select_models_interactively(available):
                 print(f"  Invalid input — enter numbers between 1 and {len(available)}.")
                 continue
 
-        if len(selected) < 2:
-            print("  Please select at least 2 models.")
+        if len(selected) < 1:
+            print("  Please select at least 1 model.")
             continue
 
         print("\nSelected:")
