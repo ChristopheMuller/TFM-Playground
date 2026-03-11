@@ -1,20 +1,17 @@
+#%%
+
 import torch
 import matplotlib.pyplot as plt
 from tfmplayground.priors.dataloader import PriorDataLoader
 
 def get_dummy_scm_batch(batch_size: int, seq_len: int, num_features: int) -> dict:
-    x = torch.zeros(batch_size, seq_len, num_features)
-    for i in range(num_features):
-        x[:, :, i] = torch.randn(batch_size, seq_len)
-        if i > 0:
-            weights = torch.randn(batch_size, i)
-            x[:, :, i] += torch.einsum('bsj,bj->bs', x[:, :, :i], weights)
     
-    y_weights = torch.randn(batch_size, num_features)
-    y = torch.einsum('bsj,bj->bs', x, y_weights) + 0.1 * torch.randn(batch_size, seq_len)
-    
+    x = torch.randn(batch_size, seq_len, num_features)
+    x[:, :, 1] = x[:, :, 1] * 0.02
+    y = x.sum(dim=-1) + 0.001 * torch.randn(batch_size, seq_len)
+
     single_eval_pos = seq_len // 2
-    
+
     return {
         "x": x,
         "y": y,
@@ -22,15 +19,20 @@ def get_dummy_scm_batch(batch_size: int, seq_len: int, num_features: int) -> dic
         "single_eval_pos": single_eval_pos
     }
 
+
+
+
 if __name__ == "__main__":
     device = torch.device("cpu")
+
+    num_cols = 2
     
     dummy_loader = PriorDataLoader(
         get_batch_function=get_dummy_scm_batch,
         num_steps=10,
         batch_size=16,
         num_datapoints_max=100,
-        num_features=10,
+        num_features=num_cols,
         device=device
     )
 
@@ -44,7 +46,7 @@ if __name__ == "__main__":
         y_np = batch['y'][0].cpu().numpy()
         num_feats = x_np.shape[1]
 
-        number_of_cols = 4
+        number_of_cols = num_cols
         number_of_rows = (num_feats + number_of_cols - 1) // number_of_cols
         fig, axes = plt.subplots(number_of_rows, number_of_cols, figsize=(4 * number_of_cols, 4 * number_of_rows))
         axes = axes.flatten()
